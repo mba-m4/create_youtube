@@ -10,9 +10,9 @@ video_pipeline.py
   4. 全クリップを連結して1本の動画にする          -> final_video.mp4
 
 TTSについて:
-  このデモではオフラインで動く espeak-ng を使用(棒読み)。
-  実運用では ElevenLabs や Google Cloud TTS など高品質なAPIに
-  差し替えるのがおすすめ(音声生成部分の関数だけ差し替えればOK)。
+  Higgsfield の text2speech_v2 モデル(REST API経由、higgsfield-client SDK)を使用。
+  声質は環境変数 HIGGSFIELD_VOICE_ID で切り替え可能(利用可能な声は `higgsfield voices list` で確認)。
+  認証情報は .env の HF_KEY (または HF_API_KEY + HF_API_SECRET) を使う(.env.example参照)。
 
 使い方:
   python3 video_pipeline.py phrases.csv
@@ -24,9 +24,19 @@ import sys
 import subprocess
 import shutil
 
-from backend.src.phrase_image_generator import generate_phrase_image, load_phrases_from_csv
+import higgsfield_client
+import requests
+from dotenv import load_dotenv
 
-WORK_DIR = "/home/claude/pipeline_output"
+from phrase_image_generator import generate_phrase_image, load_phrases_from_csv
+
+load_dotenv()
+
+# Tallulah(プリセット音声)をデフォルトに使用。優先順位: 引数 > 環境変数 > デフォルト値
+DEFAULT_VOICE_ID = "f32c8f51-449e-4ddf-bdf7-1527e11df917"
+DEFAULT_TTS_VARIANT = "elevenlabs"
+
+WORK_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "pipeline_output")
 AUDIO_DIR = os.path.join(WORK_DIR, "audio")
 IMAGE_DIR = os.path.join(WORK_DIR, "images")
 CLIP_DIR = os.path.join(WORK_DIR, "clips")
@@ -46,16 +56,45 @@ def setup_dirs():
         os.makedirs(d, exist_ok=True)
 
 
-def generate_audio(text, out_path, voice="en"):
+def generate_audio(text, out_path, voice_id=None, variant=None):
     """
-    TTSで音声ファイルを生成する。
-    ※ここを ElevenLabs API 等に差し替えれば高品質な音声になる。
+    Higgsfield(text2speech_v2)でTTS音声を生成し、out_pathに保存する。
+
+    Args:
+        text: 読み上げるテキスト
+        out_path: 保存先パス
+        voice_id: Higgsfieldのプリセット音声ID(省略時は環境変数 HIGGSFIELD_VOICE_ID
+                  → DEFAULT_VOICE_ID の順で解決)
+        variant: TTSエンジンのバリアント(elevenlabs/minimax/seed_speech/vibe_voice/cozy_voice。
+                 省略時は環境変数 HIGGSFIELD_TTS_VARIANT → DEFAULT_TTS_VARIANT の順で解決)
     """
-    subprocess.run(
-        ["espeak-ng", "-v", voice, "-s", "150", text, "-w", out_path],
-        check=True,
-        capture_output=True,
+    resolved_voice_id = voice_id or os.environ.get("HIGGSFIELD_VOICE_ID") or DEFAULT_VOICE_ID
+    resolved_variant = variant or os.environ.get("HIGGSFIELD_TTS_VARIANT") or DEFAULT_TTS_VARIANT
+
+    result = higgsfield_client.subscribe(
+        "text2speech_v2",
+        arguments={
+            "prompt": text,
+            "variant": resolved_variant,
+            "voice_type": "preset",
+            "voice_id": resolved_voice_id,
+        },
     )
+
+    try:
+        audio_url = result["audios"][0]["url"]
+    except (KeyError, IndexError, TypeError) as e:
+        # Higgsfieldの音声生成レスポンスの正確なキー名は未検証(ドキュメントに記載なし)。
+        # 実際に課金・実行して確認できたら、ここのキー名を確定させること。
+        raise RuntimeError(
+            f"Higgsfieldのレスポンス形式が想定(result['audios'][0]['url'])と異なります。"
+            f"実際のresult: {result}"
+        ) from e
+
+    response = requests.get(audio_url, timeout=60)
+    response.raise_for_status()
+    with open(out_path, "wb") as f:
+        f.write(response.content)
 
 
 def get_audio_duration(path):

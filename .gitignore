@@ -1,0 +1,16 @@
+# 環境変数・APIキー
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# 生成物(音声・画像・動画の一時出力)
+backend/pipeline_output/
+
+# フレーズDB(ローカルの実行時データ。環境ごとに異なるので追跡しない)
+backend/data/*.db
