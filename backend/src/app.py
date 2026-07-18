@@ -104,12 +104,18 @@ async def upload_csv(file: UploadFile = File(...)):
     upload_dir = os.path.join(DATA_DIR, "uploads")
     os.makedirs(upload_dir, exist_ok=True)
 
-    filepath = os.path.join(upload_dir, file.filename or "uploaded.csv")
+    filename = os.path.basename(file.filename or "")
+    if not filename or filename in (".", ".."):
+        filename = "uploaded.csv"
+    if not filename.lower().endswith(".csv"):
+        raise HTTPException(status_code=400, detail="Only .csv files are allowed")
+
+    filepath = os.path.join(upload_dir, filename)
     with open(filepath, "wb") as f:
         content = await file.read()
         f.write(content)
 
-    return {"filename": file.filename, "path": filepath}
+    return {"filename": filename, "path": filepath}
 
 
 @app.get("/api/preview")
