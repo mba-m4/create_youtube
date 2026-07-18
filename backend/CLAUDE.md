@@ -38,7 +38,12 @@
 - 動画化との連携(`get_unused_phrases()` → `video_pipeline.run_pipeline()` → `mark_used()`)は
   まだ`video_pipeline.py`側に組み込んでいない。呼び出し側で手動で繋ぐ想定。
 
+## TTS(音声生成)
+
+- `src/tts_elevenlabs.py` が担当。ElevenLabs APIを使用し、`video_pipeline.py`から呼び出す。
+- APIキーは `.env` に `ELEVENLABS_API_KEY` として保存する(`.env.example`参照)。
+
 ## 未確定事項(今後決める)
 
-- TTS API差し替え時の音声品質基準
+- ElevenLabsの音声品質基準(voice_id/model_idの最終選定)
 - `video_pipeline.py`をDB連携(未使用フレーズの自動取得→動画化→used_at更新)に対応させるか
