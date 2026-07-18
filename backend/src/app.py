@@ -201,7 +201,7 @@ def main():
     """開発用: uvicorn で起動"""
     print("Starting video generator Web UI...")
     print("Open http://localhost:8000 in your browser")
-    uvicorn.run(app, host="127.0.0.1", port=8000, reload=True)
+    uvicorn.run(app, host="127.0.0.1", port=8000)
 
 
 if __name__ == "__main__":
