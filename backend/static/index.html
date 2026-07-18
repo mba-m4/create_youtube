@@ -1,0 +1,407 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Video Generator - English Phrase Videos</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+        .container {
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            max-width: 800px;
+            width: 100%;
+            padding: 40px;
+        }
+        h1 {
+            color: #333;
+            margin-bottom: 10px;
+            font-size: 28px;
+        }
+        .subtitle {
+            color: #666;
+            margin-bottom: 30px;
+            font-size: 14px;
+        }
+        .section {
+            margin-bottom: 30px;
+        }
+        .section-title {
+            color: #333;
+            font-weight: 600;
+            margin-bottom: 15px;
+            font-size: 16px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        .input-group {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 15px;
+        }
+        select, input[type="file"], button {
+            padding: 10px 15px;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            font-size: 14px;
+            font-family: inherit;
+        }
+        select {
+            flex: 1;
+            background: white;
+            cursor: pointer;
+        }
+        input[type="file"] {
+            flex: 1;
+        }
+        button {
+            background: #667eea;
+            color: white;
+            border: none;
+            cursor: pointer;
+            font-weight: 600;
+            transition: background 0.3s ease;
+            white-space: nowrap;
+        }
+        button:hover {
+            background: #5568d3;
+        }
+        button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+        .preview-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 20px;
+        }
+        .preview-table thead {
+            background: #f5f5f5;
+        }
+        .preview-table th, .preview-table td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid #ddd;
+            font-size: 13px;
+        }
+        .preview-table th {
+            font-weight: 600;
+            color: #333;
+        }
+        .preview-table tbody tr:hover {
+            background: #fafafa;
+        }
+        .progress-container {
+            display: none;
+            margin-bottom: 20px;
+        }
+        .progress-bar {
+            width: 100%;
+            height: 8px;
+            background: #e0e0e0;
+            border-radius: 4px;
+            overflow: hidden;
+            margin-bottom: 10px;
+        }
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #667eea, #764ba2);
+            width: 0%;
+            transition: width 0.3s ease;
+        }
+        .progress-text {
+            color: #666;
+            font-size: 13px;
+            margin-bottom: 5px;
+        }
+        .current-phrase {
+            color: #333;
+            font-size: 13px;
+            font-weight: 500;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .video-container {
+            display: none;
+            margin-top: 30px;
+            padding-top: 30px;
+            border-top: 1px solid #ddd;
+        }
+        video {
+            width: 100%;
+            border-radius: 6px;
+            background: #000;
+            margin-bottom: 15px;
+        }
+        .download-link {
+            display: inline-block;
+            background: #667eea;
+            color: white;
+            padding: 10px 20px;
+            border-radius: 6px;
+            text-decoration: none;
+            font-weight: 600;
+            font-size: 14px;
+            transition: background 0.3s ease;
+        }
+        .download-link:hover {
+            background: #5568d3;
+        }
+        .error-message {
+            background: #fee;
+            color: #c33;
+            padding: 12px 15px;
+            border-radius: 6px;
+            margin-bottom: 15px;
+            font-size: 13px;
+            display: none;
+        }
+        .success-message {
+            background: #efe;
+            color: #3c3;
+            padding: 12px 15px;
+            border-radius: 6px;
+            margin-bottom: 15px;
+            font-size: 13px;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎬 Video Generator</h1>
+        <p class="subtitle">English phrases to video with audio and subtitles</p>
+
+        <div class="error-message" id="errorMessage"></div>
+        <div class="success-message" id="successMessage"></div>
+
+        <!-- CSV Selection -->
+        <div class="section">
+            <div class="section-title">1. Select or Upload CSV</div>
+            <div class="input-group">
+                <select id="csvSelect">
+                    <option value="">-- Select a CSV file --</option>
+                </select>
+                <button onclick="loadCsvList()">Refresh</button>
+            </div>
+            <div class="input-group">
+                <input type="file" id="csvUpload" accept=".csv" placeholder="Or upload a new CSV">
+                <button onclick="uploadCsv()">Upload</button>
+            </div>
+        </div>
+
+        <!-- Preview -->
+        <div class="section">
+            <div class="section-title">2. Preview Phrases</div>
+            <table class="preview-table" id="previewTable" style="display: none;">
+                <thead>
+                    <tr>
+                        <th>#</th>
+                        <th>English</th>
+                        <th>Japanese</th>
+                    </tr>
+                </thead>
+                <tbody id="previewBody"></tbody>
+            </table>
+            <p id="previewPlaceholder" style="color: #999; font-size: 13px;">Select a CSV file to see phrases</p>
+        </div>
+
+        <!-- Generate -->
+        <div class="section">
+            <div class="section-title">3. Generate Video</div>
+            <button onclick="generateVideo()" id="generateBtn" style="width: 100%; padding: 12px; font-size: 16px;">
+                Generate Video
+            </button>
+        </div>
+
+        <!-- Progress -->
+        <div class="progress-container" id="progressContainer">
+            <div class="progress-text">
+                <span id="progressText">0/0</span> phrases processed
+            </div>
+            <div class="progress-bar">
+                <div class="progress-fill" id="progressFill"></div>
+            </div>
+            <div class="current-phrase" id="currentPhrase"></div>
+        </div>
+
+        <!-- Video Output -->
+        <div class="video-container" id="videoContainer">
+            <div class="section-title">4. Download Video</div>
+            <video id="outputVideo" controls></video>
+            <a href="#" class="download-link" id="downloadLink" download="output.mp4">
+                Download MP4
+            </a>
+        </div>
+    </div>
+
+    <script>
+        let currentCsvPath = null;
+        let currentJobId = null;
+
+        async function loadCsvList() {
+            try {
+                const res = await fetch("/api/csvs");
+                const csvs = await res.json();
+                const select = document.getElementById("csvSelect");
+                const currentValue = select.value;
+                select.innerHTML = '<option value="">-- Select a CSV file --</option>';
+                csvs.forEach(csv => {
+                    const opt = document.createElement("option");
+                    opt.value = csv.path;
+                    opt.textContent = csv.filename;
+                    select.appendChild(opt);
+                });
+                if (currentValue) select.value = currentValue;
+            } catch (e) {
+                showError("Failed to load CSV list: " + e.message);
+            }
+        }
+
+        async function uploadCsv() {
+            const input = document.getElementById("csvUpload");
+            if (!input.files.length) {
+                showError("Please select a file");
+                return;
+            }
+            const formData = new FormData();
+            formData.append("file", input.files[0]);
+            try {
+                const res = await fetch("/api/upload", { method: "POST", body: formData });
+                if (!res.ok) throw new Error((await res.json()).detail);
+                showSuccess("CSV uploaded successfully");
+                input.value = "";
+                await loadCsvList();
+            } catch (e) {
+                showError("Upload failed: " + e.message);
+            }
+        }
+
+        document.getElementById("csvSelect").addEventListener("change", async (e) => {
+            currentCsvPath = e.target.value;
+            if (currentCsvPath) {
+                await previewCsv();
+            } else {
+                document.getElementById("previewPlaceholder").style.display = "block";
+                document.getElementById("previewTable").style.display = "none";
+            }
+        });
+
+        async function previewCsv() {
+            if (!currentCsvPath) return;
+            try {
+                const res = await fetch(`/api/preview?path=${encodeURIComponent(currentCsvPath)}`);
+                if (!res.ok) throw new Error((await res.json()).detail);
+                const data = await res.json();
+                const tbody = document.getElementById("previewBody");
+                tbody.innerHTML = "";
+                data.phrases.forEach((p, i) => {
+                    const tr = document.createElement("tr");
+                    tr.innerHTML = `<td>${i + 1}</td><td>${p.english}</td><td>${p.japanese}</td>`;
+                    tbody.appendChild(tr);
+                });
+                document.getElementById("previewTable").style.display = "table";
+                document.getElementById("previewPlaceholder").style.display = "none";
+            } catch (e) {
+                showError("Preview failed: " + e.message);
+            }
+        }
+
+        async function generateVideo() {
+            if (!currentCsvPath) {
+                showError("Please select a CSV file");
+                return;
+            }
+            document.getElementById("generateBtn").disabled = true;
+            document.getElementById("progressContainer").style.display = "block";
+            document.getElementById("videoContainer").style.display = "none";
+            clearMessages();
+
+            try {
+                const res = await fetch("/api/generate", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ csv_path: currentCsvPath }),
+                });
+                if (!res.ok) throw new Error((await res.json()).detail);
+                currentJobId = (await res.json()).job_id;
+                pollProgress();
+            } catch (e) {
+                showError("Generation failed: " + e.message);
+                document.getElementById("generateBtn").disabled = false;
+                document.getElementById("progressContainer").style.display = "none";
+            }
+        }
+
+        async function pollProgress() {
+            if (!currentJobId) return;
+            try {
+                const res = await fetch(`/api/status/${currentJobId}`);
+                if (!res.ok) throw new Error("Status check failed");
+                const job = await res.json();
+
+                const pct = job.total ? Math.round((job.current / job.total) * 100) : 0;
+                document.getElementById("progressFill").style.width = pct + "%";
+                document.getElementById("progressText").textContent = `${job.current}/${job.total}`;
+                document.getElementById("currentPhrase").textContent = job.current_phrase || "";
+
+                if (job.status === "running") {
+                    setTimeout(pollProgress, 1000);
+                } else if (job.status === "completed") {
+                    showSuccess("Video generated successfully!");
+                    showVideoPlayer();
+                } else if (job.status === "error") {
+                    showError("Generation error: " + job.error);
+                }
+                document.getElementById("generateBtn").disabled = job.status === "running";
+            } catch (e) {
+                showError("Poll failed: " + e.message);
+            }
+        }
+
+        function showVideoPlayer() {
+            document.getElementById("videoContainer").style.display = "block";
+            document.getElementById("progressContainer").style.display = "none";
+            const videoUrl = `/api/video/${currentJobId}`;
+            document.getElementById("outputVideo").src = videoUrl;
+            document.getElementById("downloadLink").href = videoUrl;
+        }
+
+        function showError(msg) {
+            const el = document.getElementById("errorMessage");
+            el.textContent = msg;
+            el.style.display = "block";
+            setTimeout(() => { el.style.display = "none"; }, 5000);
+        }
+
+        function showSuccess(msg) {
+            const el = document.getElementById("successMessage");
+            el.textContent = msg;
+            el.style.display = "block";
+            setTimeout(() => { el.style.display = "none"; }, 3000);
+        }
+
+        function clearMessages() {
+            document.getElementById("errorMessage").style.display = "none";
+            document.getElementById("successMessage").style.display = "none";
+        }
+
+        loadCsvList();
+    </script>
+</body>
+</html>

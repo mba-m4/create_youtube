@@ -10,7 +10,7 @@
   - CSVからフレーズを読み込む機能あり
 - `video_pipeline.py`
   - フレーズを1つずつ処理し、音声生成→画像生成→動画クリップ化→全体連結まで自動で行う
-  - TTSは現状 `espeak-ng`(オフライン・棒読み)でプロトタイプ済み。ElevenLabs等に差し替え予定
+  - TTSは `tts_elevenlabs.py`(ElevenLabs API)を使用
 - `phrase_generator.py`
   - Claude APIでテーマからフレーズ(英語+日本語)を自動生成し、CSVに保存する
   - まだAPI課金未設定のため実際の生成テストは未実施(構文・CSV保存ロジックのみ確認済み)
@@ -27,24 +27,55 @@
 # ffmpeg (動画結合)
 sudo apt-get install ffmpeg
 
-# espeak-ng (プロトタイプ用オフラインTTS。本番はAPIに差し替え予定)
-sudo apt-get install espeak-ng
+# 日本語表示用フォント(Noto Sans CJK)
+sudo apt-get install fonts-noto-cjk
+```
+
+## セットアップ(必要な依存関係)
+
+### システムコマンド
+
+#### Linux (Ubuntu等)
+```bash
+# ffmpeg (動画結合)
+sudo apt-get install ffmpeg
 
 # 日本語表示用フォント(Noto Sans CJK)
 sudo apt-get install fonts-noto-cjk
 ```
 
-### Pythonパッケージ
+#### macOS
 ```bash
-pip install pillow
+# ffmpeg (Homebrew でインストール)
+brew install ffmpeg
+
+# 日本語フォント(オプション。デフォルトは AppleSDGothicNeo を使用)
+# より良い日本語表示を望む場合:
+brew install --cask font-noto-sans-cjk-jp
 ```
 
+### Pythonパッケージ
+`uv sync`(または`pip install -e .`)で`pyproject.toml`記載の依存関係(pillow, elevenlabs, fastapi等)を導入する。
+
+### ElevenLabs APIキー
+`.env`に`ELEVENLABS_API_KEY`を設定する(`.env.example`参照)。
+
 ### フォントパス(環境によって変わるので要確認)
-`phrase_image_generator.py` 内で下記を指定している。環境が変わったらパスを見直すこと。
-```python
-EN_FONT_PATH = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
-JP_FONT_PATH = "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc"
+
+`phrase_image_generator.py` は環境変数 `EN_FONT_PATH` / `JP_FONT_PATH` で指定されたパスを優先し、
+未設定ならLinux用のデフォルトパスを使用します。
+
+**macOS の場合は `.env` に以下を設定してください:**
+```bash
+# オプション 1: 自動インストール済みの AppleSDGothicNeo を使用(デフォルト、OK)
+JP_FONT_PATH=/System/Library/Fonts/AppleSDGothicNeo.ttc
+
+# オプション 2: 高品質な Noto Sans CJK JP をインストール済みの場合
+JP_FONT_PATH=/Library/Fonts/NotoSansCJK-Regular.ttc
 ```
+
+英語フォント(`EN_FONT_PATH`)は、多くの環境ではデフォルト(`/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf`)
+が自動で検索されるため、通常は設定不要です。必要に応じて `.env` で上書きしてください。
 
 ## 設計方針(重要)
 
@@ -72,9 +103,9 @@ JP_FONT_PATH = "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc"
    - 未実装: `phrase_generator.py`からDBへの直接INSERT、`video_pipeline.py`側での
      「DBから取得→動画化→used_at更新」の自動連携(現状は呼び出し側で手動で繋ぐ)
 
-3. **TTSを高品質化**
-   - `generate_audio()` を ElevenLabs API 等に差し替える
-   - 英語だけでなく日本語音声も追加する場合、読み上げ順(英語→間→日本語)と、その合計時間に合わせた画像表示時間の計算が必要
+3. **TTSを高品質化**(実装済み)
+   - `tts_elevenlabs.py` でElevenLabs APIに差し替え済み(`video_pipeline.py`から呼び出し)
+   - 英語だけでなく日本語音声も追加する場合、読み上げ順(英語→間→日本語)と、その合計時間に合わせた画像表示時間の計算が必要(未実装)
 
 4. **cronで定期実行**
    - 1〜3が固まってから着手
@@ -89,6 +120,28 @@ JP_FONT_PATH = "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc"
 
 - `phrase_image_generator.py` — フレーズ画像生成モジュール
 - `video_pipeline.py` — 音声・画像・動画結合の一括パイプライン
+- `tts_elevenlabs.py` — ElevenLabs APIによるTTS(音声生成)モジュール
 - `phrase_generator.py` — Claude APIによるフレーズ自動生成モジュール
 - `phrase_db.py` — フレーズのSQLite管理モジュール
+- `app.py` — FastAPI による Web UI サーバー
 - `sample_phrases.csv` — CSVフォーマットのサンプル(1列目=英語, 2列目=日本語, ヘッダー行あり)
+
+## Web UI での使用
+
+### 起動
+
+```bash
+cd backend
+uv sync                    # 依存関係をインストール
+python3 src/app.py         # または: uv run python3 src/app.py
+```
+
+ブラウザで `http://localhost:8000` を開く。
+
+### 操作
+
+1. **CSV を選択またはアップロード** — `data/` 配下のCSVファイルをドロップダウンから選択、
+   または新しいCSVをアップロード
+2. **フレーズをプレビュー** — 選択したCSVの内容を確認
+3. **「Generate Video」をクリック** — 動画生成を開始(進捗をリアルタイム表示)
+4. **完成後、ダウンロード** — 動画をプレイヤーで再生またはMP4をダウンロード

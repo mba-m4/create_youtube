@@ -25,6 +25,9 @@ import os
 import csv
 import sys
 from PIL import Image, ImageDraw, ImageFont
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # ---- デザイン設定(必要に応じて呼び出し側から上書き可能) ----
 WIDTH, HEIGHT = 1280, 720
@@ -33,8 +36,14 @@ BG_COLOR_BOTTOM = (45, 55, 90)
 EN_COLOR = (255, 255, 255)
 JP_COLOR = (255, 210, 90)
 
-EN_FONT_PATH = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
-JP_FONT_PATH = "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc"
+# 環境によってフォントパスが異なるため、.env の EN_FONT_PATH / JP_FONT_PATH を優先し、
+# 未設定ならLinux(Ubuntu等)でのデフォルトパスにフォールバックする。
+EN_FONT_PATH = os.environ.get(
+    "EN_FONT_PATH", "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
+)
+JP_FONT_PATH = os.environ.get(
+    "JP_FONT_PATH", "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc"
+)
 EN_FONT_SIZE = 64
 JP_FONT_SIZE = 48
 
