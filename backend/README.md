@@ -3,6 +3,9 @@
 英語フレーズ+日本語訳の動画を自動生成するパイプライン。
 「フレーズ集 → 音声(TTS) → 画像 → 動画」までを自動化する。
 
+> 「動かし方」だけを知りたい場合は使い方ガイドを参照:
+> [日本語](docs/usage_ja.md) / [English](docs/usage_en.md)
+
 ## 現状できていること
 
 - `phrase_image_generator.py`
