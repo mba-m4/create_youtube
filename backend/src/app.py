@@ -20,6 +20,7 @@ API エンドポイント:
     POST /api/generate   — 動画生成開始(CSV指定 or DBから未使用フレーズ取得)
     GET  /api/status/{id} — 進捗確認
     GET  /api/video/{id} — 完成動画ダウンロード
+    POST /api/phrases/generate — Claude APIでフレーズ自動生成(CSV保存+DB登録)
 """
 
 import os
@@ -43,6 +44,8 @@ import job_store
 from phrase_image_generator import load_phrases_from_csv
 from phrase_db import get_unused_phrases, mark_used, stats_by_theme
 from video_pipeline import run_pipeline
+import phrase_generator
+import phrase_db
 
 WORK_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "pipeline_output")
 DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data")
@@ -149,6 +152,7 @@ async def list_csvs():
     os.makedirs(DATA_DIR, exist_ok=True)
     csv_files = glob.glob(os.path.join(DATA_DIR, "*.csv"))
     csv_files += glob.glob(os.path.join(DATA_DIR, "uploads", "*.csv"))
+    csv_files += glob.glob(os.path.join(DATA_DIR, "generated", "*.csv"))
 
     result = []
     for path in csv_files:
@@ -199,6 +203,42 @@ async def preview_csv(path: str):
 async def phrase_stats():
     """フレーズDBのテーマ別在庫(未使用件数/合計件数)を返す"""
     return stats_by_theme()
+
+
+@app.post("/api/phrases/generate")
+async def generate_phrases_endpoint(request: dict):
+    """Claude APIでテーマから英語フレーズを自動生成し、CSV保存 + DB登録する"""
+    theme = (request.get("theme") or "").strip()
+    if not theme:
+        raise HTTPException(status_code=400, detail="theme is required")
+
+    count = request.get("count", 20)
+    try:
+        count = int(count)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="count must be an integer")
+    if count <= 0:
+        raise HTTPException(status_code=400, detail="count must be a positive integer")
+
+    try:
+        phrases = phrase_generator.generate_phrases(theme, count=count)
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Phrase generation failed ({type(e).__name__}): {str(e)}",
+        )
+
+    csv_path = phrase_generator.default_output_path(theme)
+    phrase_generator.save_phrases_to_csv(phrases, csv_path)
+    inserted = phrase_db.insert_phrases(phrases, theme=theme)
+
+    return {
+        "theme": theme,
+        "count": len(phrases),
+        "inserted": inserted,
+        "csv_path": csv_path,
+        "filename": os.path.basename(csv_path),
+    }
 
 
 @app.post("/api/generate")
