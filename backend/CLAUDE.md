@@ -60,6 +60,13 @@
 
 - `src/tts_elevenlabs.py` が担当。ElevenLabs APIを使用し、`video_pipeline.py`から呼び出す。
 - APIキーは `.env` に `ELEVENLABS_API_KEY` として保存する(`.env.example`参照)。
+- 読み上げ順(`sequence`、例: `["en", "ja"]`)は `video_pipeline.run_pipeline()` の引数で
+  指定する(省略時は `["en"]` で従来通り英語のみ)。`build_sequence_audio()` が
+  同じ言語の音声をAPIで1回だけ生成し(重複排除)、`sequence`の順に無音(`SILENCE_BETWEEN_SEC`)
+  を挟んで結合する。
+- Web UI経由の場合は `job_store.py` の `sequence_json` カラムにジョブ作成時点で
+  スナップショットされ、`app.py` の `POST /api/generate` が `"en"`/`"ja"` 以外の値を
+  弾く(APIバウンダリでのバリデーション)。
 
 ## 未確定事項(今後決める)
 

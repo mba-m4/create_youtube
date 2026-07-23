@@ -4,18 +4,25 @@ video_pipeline.py
 フレーズ集(英語+日本語)から、音声・画像・動画まで一括生成するパイプライン。
 
 流れ:
-  1. フレーズごとに英語音声(TTS)を生成          -> audio/phrase_XX.mp3
-  2. フレーズごとに画像を生成                    -> images/phrase_XX.png
-  3. 画像+音声を1クリップに結合                  -> clips/phrase_XX.mp4
-  4. 全クリップを連結して1本の動画にする          -> final_video.mp4
+  1. フレーズごとに音声(TTS)をsequence通りに生成・結合  -> audio/phrase_XX.mp3
+  2. フレーズごとに画像を生成                            -> images/phrase_XX.png
+  3. 画像+音声を1クリップに結合                          -> clips/phrase_XX.mp4
+  4. 全クリップを連結して1本の動画にする                  -> final_video.mp4
 
 TTSについて:
   ElevenLabs API(`tts_elevenlabs.py`)を使用。
   APIキーは .env の ELEVENLABS_API_KEY を使う(.env.example参照)。
 
+読み上げ順(sequence)について:
+  run_pipeline() の sequence 引数で読み上げる言語の順番を指定できる
+  (例: ["en", "ja"] や ["en", "en", "ja"])。省略時は ["en"](英語のみ)。
+  同じ言語が複数回出てきても、その言語の音声はAPIで1回しか生成しない
+  (生成した音声ファイルを使い回して結合する)。
+
 使い方:
   python3 video_pipeline.py phrases.csv
-  python3 video_pipeline.py            # 引数なしならサンプルフレーズを使用
+  python3 video_pipeline.py phrases.csv en,ja   # 読み上げ順を指定(カンマ区切り)
+  python3 video_pipeline.py                     # 引数なしならサンプルフレーズを使用
 """
 
 import os
@@ -43,6 +50,8 @@ SAMPLE_PHRASES = [
 ]
 
 SILENCE_AFTER_SEC = 1.0  # 音声の後に画像だけ表示しておく余白の秒数
+SILENCE_BETWEEN_SEC = 0.5  # sequence内の音声同士の間に挟む無音の秒数
+DEFAULT_SEQUENCE = ["en"]
 
 
 def setup_dirs():
@@ -106,10 +115,79 @@ def concat_clips(clip_paths, out_path):
     )
 
 
-def run_pipeline(phrases, on_progress=None):
+def make_silence(out_path, duration_sec):
+    """無音のmp3ファイルを作る(sequence内の音声同士をつなぐ間として使う)"""
+    subprocess.run(
+        [
+            "ffmpeg", "-y",
+            "-f", "lavfi", "-i", "anullsrc=r=44100:cl=mono",
+            "-t", str(duration_sec),
+            "-c:a", "libmp3lame",
+            out_path,
+        ],
+        check=True,
+        capture_output=True,
+    )
+
+
+def concat_audio(audio_paths, out_path):
+    """複数の音声ファイルを1本に連結する(concat_clipsの音声版)"""
+    filelist_path = os.path.join(WORK_DIR, "audio_filelist.txt")
+    with open(filelist_path, "w") as f:
+        for p in audio_paths:
+            f.write(f"file '{os.path.abspath(p)}'\n")
+
+    # 入力ファイル(ElevenLabs出力 + ffmpeg生成の無音)でビットレート等が
+    # 揃っていない可能性があるため、-c copy ではなく再エンコードして繋ぐ
+    subprocess.run(
+        [
+            "ffmpeg", "-y",
+            "-f", "concat", "-safe", "0",
+            "-i", filelist_path,
+            "-c:a", "libmp3lame", "-b:a", "128k",
+            out_path,
+        ],
+        check=True,
+        capture_output=True,
+    )
+
+
+def build_sequence_audio(en, jp, sequence, audio_dir, tag):
     """
+    sequence(例: ["en", "en", "ja"])の順に読み上げ音声を結合した1本のmp3を作る。
+    同じ言語は音声APIで1回しか生成せず(重複排除)、結合時に使い回す。
+    """
+    texts = {"en": en, "ja": jp}
+    lang_paths = {}
+    for lang in set(sequence):
+        lang_path = os.path.join(audio_dir, f"phrase_{tag}_{lang}.mp3")
+        generate_audio(texts[lang], lang_path, language_code=lang)
+        lang_paths[lang] = lang_path
+
+    if len(sequence) == 1:
+        return lang_paths[sequence[0]]
+
+    silence_path = os.path.join(audio_dir, "_silence.mp3")
+    if not os.path.exists(silence_path):
+        make_silence(silence_path, SILENCE_BETWEEN_SEC)
+
+    parts = []
+    for i, lang in enumerate(sequence):
+        if i > 0:
+            parts.append(silence_path)
+        parts.append(lang_paths[lang])
+
+    final_path = os.path.join(audio_dir, f"phrase_{tag}.mp3")
+    concat_audio(parts, final_path)
+    return final_path
+
+
+def run_pipeline(phrases, sequence=None, on_progress=None):
+    """
+    sequence: 読み上げる言語の順番(例: ["en", "ja"])。省略時は ["en"](英語のみ)。
     on_progress: 各フレーズのクリップ完成時に on_progress(i, total, en) の形で呼ばれる(省略可)。
     """
+    sequence = sequence or DEFAULT_SEQUENCE
     setup_dirs()
     clip_paths = []
     total = len(phrases)
@@ -118,9 +196,8 @@ def run_pipeline(phrases, on_progress=None):
         tag = f"{i:02d}"
         print(f"[{tag}] processing: {en}")
 
-        # 1. 音声生成
-        audio_path = os.path.join(AUDIO_DIR, f"phrase_{tag}.mp3")
-        generate_audio(en, audio_path, language_code="en")
+        # 1. 音声生成(sequence通りに結合)
+        audio_path = build_sequence_audio(en, jp, sequence, AUDIO_DIR, tag)
 
         # 2. 画像生成
         img = generate_phrase_image(en, jp)
@@ -150,7 +227,9 @@ def main():
         phrases = SAMPLE_PHRASES
         print("using sample phrases")
 
-    run_pipeline(phrases)
+    sequence = sys.argv[2].split(",") if len(sys.argv) > 2 else None
+
+    run_pipeline(phrases, sequence=sequence)
 
 
 if __name__ == "__main__":
