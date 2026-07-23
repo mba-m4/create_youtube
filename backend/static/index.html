@@ -136,6 +136,11 @@
             overflow: hidden;
             text-overflow: ellipsis;
         }
+        .queue-message {
+            color: #666;
+            font-size: 13px;
+            font-style: italic;
+        }
         .video-container {
             display: none;
             margin-top: 30px;
@@ -231,13 +236,16 @@
 
         <!-- Progress -->
         <div class="progress-container" id="progressContainer">
-            <div class="progress-text">
-                <span id="progressText">0/0</span> phrases processed
+            <div class="queue-message" id="queueMessage" style="display: none;">Waiting in queue…</div>
+            <div id="progressDetails">
+                <div class="progress-text">
+                    <span id="progressText">0/0</span> phrases processed
+                </div>
+                <div class="progress-bar">
+                    <div class="progress-fill" id="progressFill"></div>
+                </div>
+                <div class="current-phrase" id="currentPhrase"></div>
             </div>
-            <div class="progress-bar">
-                <div class="progress-fill" id="progressFill"></div>
-            </div>
-            <div class="current-phrase" id="currentPhrase"></div>
         </div>
 
         <!-- Video Output -->
@@ -354,6 +362,17 @@
                 const res = await fetch(`/api/status/${currentJobId}`);
                 if (!res.ok) throw new Error("Status check failed");
                 const job = await res.json();
+
+                if (job.status === "queued") {
+                    document.getElementById("queueMessage").style.display = "block";
+                    document.getElementById("progressDetails").style.display = "none";
+                    setTimeout(pollProgress, 1000);
+                    document.getElementById("generateBtn").disabled = true;
+                    return;
+                }
+
+                document.getElementById("queueMessage").style.display = "none";
+                document.getElementById("progressDetails").style.display = "block";
 
                 const pct = job.total ? Math.round((job.current / job.total) * 100) : 0;
                 document.getElementById("progressFill").style.width = pct + "%";
