@@ -24,6 +24,7 @@ API エンドポイント:
 import os
 import sys
 import glob
+import time
 import uuid
 import threading
 import traceback
@@ -37,6 +38,7 @@ import uvicorn
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+import job_store
 from phrase_image_generator import load_phrases_from_csv
 from video_pipeline import run_pipeline
 
@@ -44,25 +46,31 @@ WORK_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__
 DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data")
 FINAL_VIDEO = os.path.join(WORK_DIR, "final_video.mp4")
 STATIC_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "static")
+JOBS_DB_PATH = os.path.join(DATA_DIR, "jobs.db")
+
+DISPATCH_POLL_SEC = 1  # キューの空き状況をチェックする間隔(秒)
 
 app = FastAPI(title="Video Generator")
 
-# ジョブ管理(単一ジョブのみサポート)
-JOBS = {}
-JOB_LOCK = threading.Lock()
+# ジョブ管理: 状態は job_store.py (SQLite, data/jobs.db) で永続化する。
+# 起動時に前回プロセスから running のまま残ったジョブを error にする(再開不可のため)。
+job_store.init_db(db_path=JOBS_DB_PATH)
+
+# 重要: run_pipeline() が使う出力先(AUDIO_DIR/IMAGE_DIR/CLIP_DIR/FINAL_VIDEO)は
+# video_pipeline.py 側でジョブ非依存の固定パスになっているため、同時に2つ以上の
+# ジョブを走らせると ffmpeg/TTS の出力が競合して壊れる。そのため実行中ジョブは
+# 常に最大1件までとし、それ以外は queued として待機させる(下記ディスパッチャー参照)。
+DISPATCH_LOCK = threading.Lock()
 
 
 def get_job_status(job_id: str):
     """ジョブの状態を取得"""
-    return JOBS.get(job_id, {})
+    return job_store.get_job(job_id, db_path=JOBS_DB_PATH)
 
 
 def set_job_status(job_id: str, **kwargs):
     """ジョブの状態を更新"""
-    with JOB_LOCK:
-        if job_id not in JOBS:
-            JOBS[job_id] = {}
-        JOBS[job_id].update(kwargs)
+    job_store.update_job(job_id, db_path=JOBS_DB_PATH, **kwargs)
 
 
 def on_progress_callback(job_id: str):
@@ -70,6 +78,49 @@ def on_progress_callback(job_id: str):
     def callback(current, total, phrase):
         set_job_status(job_id, current=current, total=total, current_phrase=phrase)
     return callback
+
+
+def run_job(job_id: str, csv_path: str):
+    """1ジョブ分の動画生成を実行し、完了後にキューの次のジョブを起動する"""
+    try:
+        phrases = load_phrases_from_csv(csv_path, has_header=True)
+        set_job_status(job_id, total=len(phrases))
+
+        run_pipeline(phrases, on_progress=on_progress_callback(job_id))
+
+        set_job_status(job_id, status="completed", current=len(phrases))
+    except Exception as e:
+        error_msg = f"{type(e).__name__}: {str(e)}\n{traceback.format_exc()}"
+        set_job_status(job_id, status="error", error=error_msg)
+    finally:
+        dispatch_next_job()
+
+
+def dispatch_next_job():
+    """
+    実行中のジョブがなければ、最も古い queued ジョブを1件だけ取り出して起動する。
+    (同時実行は常に1件までにする、というルールの実体化)
+    """
+    with DISPATCH_LOCK:
+        if job_store.list_jobs(status="running", db_path=JOBS_DB_PATH):
+            return
+        next_job = job_store.claim_next_queued_job(db_path=JOBS_DB_PATH)
+        if not next_job:
+            return
+    thread = threading.Thread(
+        target=run_job, args=(next_job["id"], next_job["csv_path"]), daemon=True
+    )
+    thread.start()
+
+
+def dispatcher_loop():
+    """実行中ジョブが終わったタイミングを取りこぼさないための保険としてのポーリングループ"""
+    while True:
+        time.sleep(DISPATCH_POLL_SEC)
+        dispatch_next_job()
+
+
+threading.Thread(target=dispatcher_loop, daemon=True).start()
 
 
 @app.get("/")
@@ -136,34 +187,25 @@ async def preview_csv(path: str):
 
 @app.post("/api/generate")
 async def generate_video(request: dict):
-    """動画生成を開始(バックグラウンドで実行)"""
+    """
+    動画生成ジョブを作成する。
+    既に実行中のジョブが無ければ即座に開始し、あれば queued として登録して
+    実行中ジョブの完了後にディスパッチャーが自動的に起動する。
+    """
     csv_path = request.get("csv_path")
     if not csv_path or not os.path.exists(csv_path):
         raise HTTPException(status_code=400, detail="CSV file path required and must exist")
 
-    # 既に実行中のジョブがあるかチェック
-    with JOB_LOCK:
-        for job in JOBS.values():
-            if job.get("status") == "running":
-                raise HTTPException(status_code=409, detail="Another job is already running")
-
     job_id = uuid.uuid4().hex[:8]
-    set_job_status(job_id, status="running", current=0, total=0, current_phrase="", error=None)
 
-    def run_job():
-        try:
-            phrases = load_phrases_from_csv(csv_path, has_header=True)
-            set_job_status(job_id, total=len(phrases))
+    with DISPATCH_LOCK:
+        is_running = bool(job_store.list_jobs(status="running", db_path=JOBS_DB_PATH))
+        status = "queued" if is_running else "running"
+        job_store.create_job(job_id, csv_path=csv_path, status=status, db_path=JOBS_DB_PATH)
 
-            run_pipeline(phrases, on_progress=on_progress_callback(job_id))
-
-            set_job_status(job_id, status="completed", current=len(phrases))
-        except Exception as e:
-            error_msg = f"{type(e).__name__}: {str(e)}\n{traceback.format_exc()}"
-            set_job_status(job_id, status="error", error=error_msg)
-
-    thread = threading.Thread(target=run_job, daemon=True)
-    thread.start()
+    if status == "running":
+        thread = threading.Thread(target=run_job, args=(job_id, csv_path), daemon=True)
+        thread.start()
 
     return {"job_id": job_id}
 
