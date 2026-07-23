@@ -185,6 +185,19 @@
             font-size: 13px;
             display: none;
         }
+        input[type="text"], input[type="number"] {
+            padding: 10px 15px;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            font-size: 14px;
+            font-family: inherit;
+        }
+        input[type="text"] {
+            flex: 1;
+        }
+        input[type="number"] {
+            width: 90px;
+        }
     </style>
 </head>
 <body>
@@ -195,9 +208,19 @@
         <div class="error-message" id="errorMessage"></div>
         <div class="success-message" id="successMessage"></div>
 
+        <!-- Phrase Generation -->
+        <div class="section">
+            <div class="section-title">1. Generate New Phrases (optional)</div>
+            <div class="input-group">
+                <input type="text" id="phraseTheme" placeholder="Theme (e.g. restaurant conversation)">
+                <input type="number" id="phraseCount" value="20" min="1">
+                <button onclick="generatePhrases()" id="generatePhrasesBtn">Generate</button>
+            </div>
+        </div>
+
         <!-- CSV Selection -->
         <div class="section">
-            <div class="section-title">1. Select or Upload CSV</div>
+            <div class="section-title">2. Select or Upload CSV</div>
             <div class="input-group">
                 <select id="csvSelect">
                     <option value="">-- Select a CSV file --</option>
@@ -228,7 +251,7 @@
 
         <!-- Preview -->
         <div class="section">
-            <div class="section-title">2. Preview Phrases</div>
+            <div class="section-title">3. Preview Phrases</div>
             <table class="preview-table" id="previewTable" style="display: none;">
                 <thead>
                     <tr>
@@ -244,7 +267,7 @@
 
         <!-- Generate -->
         <div class="section">
-            <div class="section-title">3. Generate Video</div>
+            <div class="section-title">4. Generate Video</div>
             <button onclick="generateVideo()" id="generateBtn" style="width: 100%; padding: 12px; font-size: 16px;">
                 Generate Video
             </button>
@@ -266,7 +289,7 @@
 
         <!-- Video Output -->
         <div class="video-container" id="videoContainer">
-            <div class="section-title">4. Download Video</div>
+            <div class="section-title">5. Download Video</div>
             <video id="outputVideo" controls></video>
             <a href="#" class="download-link" id="downloadLink" download="output.mp4">
                 Download MP4
@@ -294,6 +317,38 @@
                 if (currentValue) select.value = currentValue;
             } catch (e) {
                 showError("Failed to load CSV list: " + e.message);
+            }
+        }
+
+        async function generatePhrases() {
+            const theme = document.getElementById("phraseTheme").value.trim();
+            if (!theme) {
+                showError("Please enter a theme");
+                return;
+            }
+            const count = document.getElementById("phraseCount").value || 20;
+
+            const btn = document.getElementById("generatePhrasesBtn");
+            btn.disabled = true;
+            const originalText = btn.textContent;
+            btn.textContent = "Generating…";
+            clearMessages();
+
+            try {
+                const res = await fetch("/api/phrases/generate", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ theme: theme, count: parseInt(count, 10) }),
+                });
+                if (!res.ok) throw new Error((await res.json()).detail);
+                const data = await res.json();
+                showSuccess(`Generated ${data.count} phrases for "${data.theme}"`);
+                await loadCsvList();
+            } catch (e) {
+                showError("Phrase generation failed: " + e.message);
+            } finally {
+                btn.disabled = false;
+                btn.textContent = originalText;
             }
         }
 
