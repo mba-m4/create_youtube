@@ -48,10 +48,10 @@ create_youtube/
 **1つの Issue = 1週間以内に完結する単一の作業**
 
 例：
-- ❌ 大きすぎる: "Web UI を作る" (複数の機能が含まれる)
-- ✅ 適切: "Web UI の CSV アップロード機能を実装する"
-- ✅ 適切: "Web UI の進捗表示を実装する"
-- ✅ 適切: "FastAPI エンドポイント `/api/generate` を実装する"
+- ❌ 大きすぎる: "Build Web UI" (複数の機能が含まれる)
+- ✅ 適切: "Add CSV upload feature to Web UI"
+- ✅ 適切: "Add progress display to Web UI"
+- ✅ 適切: "Implement `/api/generate` FastAPI endpoint"
 
 ### コミットの粒度
 
@@ -74,6 +74,16 @@ create_youtube/
   1. "backend: Add /api/upload endpoint"
   2. "frontend: Add CSV upload form"
   3. "docs: Update README"
+
+### Git / GitHub 操作の言語ルール
+
+**PR タイトル・Issue タイトルは英語で統一する**（コミットメッセージも同様に英語）。本文・説明は日本語で構わない。
+
+例：
+- ✅ PR タイトル: "Add Web UI for video generation"
+- ✅ Issue タイトル: "Add DB integration to Web UI for unused phrases"
+- ✅ コミットメッセージ: "fix: sanitize filename in CSV upload endpoint"
+- Issue 本文・PR 本文（Summary/Test plan など）は日本語で詳細を書いてよい
 
 ### 実装時のチェックリスト
 
