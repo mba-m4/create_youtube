@@ -16,7 +16,8 @@ API エンドポイント:
     GET  /api/csvs       — CSV ファイル一覧
     POST /api/upload     — CSV ファイルアップロード
     GET  /api/preview    — フレーズプレビュー
-    POST /api/generate   — 動画生成開始
+    GET  /api/phrases/stats — フレーズDBのテーマ別在庫(未使用/合計)
+    POST /api/generate   — 動画生成開始(CSV指定 or DBから未使用フレーズ取得)
     GET  /api/status/{id} — 進捗確認
     GET  /api/video/{id} — 完成動画ダウンロード
 """
@@ -40,6 +41,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import job_store
 from phrase_image_generator import load_phrases_from_csv
+from phrase_db import get_unused_phrases, mark_used, stats_by_theme
 from video_pipeline import run_pipeline
 
 WORK_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "pipeline_output")
@@ -80,13 +82,23 @@ def on_progress_callback(job_id: str):
     return callback
 
 
-def run_job(job_id: str, csv_path: str):
-    """1ジョブ分の動画生成を実行し、完了後にキューの次のジョブを起動する"""
+def run_job(job_id: str):
+    """
+    1ジョブ分の動画生成を実行し、完了後にキューの次のジョブを起動する。
+    処理対象フレーズは create_job() 時点でスナップショットされた phrases_json から読む
+    (CSV由来・DB由来のどちらでも同じ経路)。DB由来ジョブは完了後に mark_used() で使用済みにする。
+    """
+    job = job_store.get_job(job_id, db_path=JOBS_DB_PATH)
+    phrases = job_store.get_phrases(job)
+    phrase_ids = job_store.get_phrase_ids(job)
+
     try:
-        phrases = load_phrases_from_csv(csv_path, has_header=True)
         set_job_status(job_id, total=len(phrases))
 
         run_pipeline(phrases, on_progress=on_progress_callback(job_id))
+
+        if phrase_ids:
+            mark_used(phrase_ids)
 
         set_job_status(job_id, status="completed", current=len(phrases))
     except Exception as e:
@@ -107,9 +119,7 @@ def dispatch_next_job():
         next_job = job_store.claim_next_queued_job(db_path=JOBS_DB_PATH)
         if not next_job:
             return
-    thread = threading.Thread(
-        target=run_job, args=(next_job["id"], next_job["csv_path"]), daemon=True
-    )
+    thread = threading.Thread(target=run_job, args=(next_job["id"],), daemon=True)
     thread.start()
 
 
@@ -185,26 +195,59 @@ async def preview_csv(path: str):
         raise HTTPException(status_code=400, detail=f"Error reading CSV: {str(e)}")
 
 
+@app.get("/api/phrases/stats")
+async def phrase_stats():
+    """フレーズDBのテーマ別在庫(未使用件数/合計件数)を返す"""
+    return stats_by_theme()
+
+
 @app.post("/api/generate")
 async def generate_video(request: dict):
     """
     動画生成ジョブを作成する。
+
+    リクエストボディ:
+      - {"csv_path": "..."}                          — CSVファイルを指定(従来通り)
+      - {"source": "db", "theme": "...", "count": N}  — DBから未使用フレーズをN件取得
+        (theme省略時は全テーマ横断で取得。動画化成功時にDB側で使用済みにマークする)
+
     既に実行中のジョブが無ければ即座に開始し、あれば queued として登録して
     実行中ジョブの完了後にディスパッチャーが自動的に起動する。
     """
-    csv_path = request.get("csv_path")
-    if not csv_path or not os.path.exists(csv_path):
-        raise HTTPException(status_code=400, detail="CSV file path required and must exist")
+    source = request.get("source", "csv")
+    csv_path = None
+    phrase_ids = None
+
+    if source == "db":
+        count = request.get("count")
+        if not isinstance(count, int) or count <= 0:
+            raise HTTPException(status_code=400, detail="count is required and must be a positive integer for source=db")
+        theme = request.get("theme") or None
+
+        db_phrases = get_unused_phrases(count, theme=theme)
+        if not db_phrases:
+            raise HTTPException(status_code=400, detail="No unused phrases available in the DB for the given theme")
+
+        phrases = [(p["english"], p["japanese"]) for p in db_phrases]
+        phrase_ids = [p["id"] for p in db_phrases]
+    else:
+        csv_path = request.get("csv_path")
+        if not csv_path or not os.path.exists(csv_path):
+            raise HTTPException(status_code=400, detail="CSV file path required and must exist")
+        phrases = load_phrases_from_csv(csv_path, has_header=True)
 
     job_id = uuid.uuid4().hex[:8]
 
     with DISPATCH_LOCK:
         is_running = bool(job_store.list_jobs(status="running", db_path=JOBS_DB_PATH))
         status = "queued" if is_running else "running"
-        job_store.create_job(job_id, csv_path=csv_path, status=status, db_path=JOBS_DB_PATH)
+        job_store.create_job(
+            job_id, phrases, csv_path=csv_path, phrase_ids=phrase_ids,
+            status=status, db_path=JOBS_DB_PATH,
+        )
 
     if status == "running":
-        thread = threading.Thread(target=run_job, args=(job_id, csv_path), daemon=True)
+        thread = threading.Thread(target=run_job, args=(job_id,), daemon=True)
         thread.start()
 
     return {"job_id": job_id}
