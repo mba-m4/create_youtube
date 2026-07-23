@@ -87,6 +87,7 @@ def insert_phrases(phrases, theme=None, db_path=DB_PATH):
 
 def get_unused_phrases(n, theme=None, db_path=DB_PATH):
     """未使用(used_at IS NULL)のフレーズをn件取得する。theme指定で絞り込み可能。"""
+    init_db(db_path)
     conn = get_connection(db_path)
     if theme:
         rows = conn.execute(
@@ -106,6 +107,7 @@ def get_unused_phrases(n, theme=None, db_path=DB_PATH):
 def get_review_phrases(n, days_ago=DEFAULT_REVIEW_DAYS, db_path=DB_PATH):
     """days_ago日以上前に使用したフレーズを復習用にn件取得する(使用日が古い順)。"""
     cutoff = (datetime.datetime.now() - datetime.timedelta(days=days_ago)).isoformat()
+    init_db(db_path)
     conn = get_connection(db_path)
     rows = conn.execute(
         "SELECT * FROM phrases WHERE used_at IS NOT NULL AND used_at <= ? "
@@ -118,6 +120,7 @@ def get_review_phrases(n, days_ago=DEFAULT_REVIEW_DAYS, db_path=DB_PATH):
 
 def mark_used(phrase_ids, db_path=DB_PATH):
     """指定したidのフレーズを使用済みにする(used_atを現在時刻に更新、times_used+1)"""
+    init_db(db_path)
     conn = get_connection(db_path)
     now = datetime.datetime.now().isoformat()
     conn.executemany(
@@ -130,6 +133,7 @@ def mark_used(phrase_ids, db_path=DB_PATH):
 
 def stats_by_theme(db_path=DB_PATH):
     """テーマ別の在庫数(未使用件数/合計件数)を返す"""
+    init_db(db_path)
     conn = get_connection(db_path)
     rows = conn.execute(
         """
