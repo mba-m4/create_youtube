@@ -210,6 +210,22 @@
             </div>
         </div>
 
+        <!-- Phrase DB -->
+        <div class="section">
+            <div class="section-title">Or Generate From Phrase Bank</div>
+            <div class="input-group">
+                <select id="dbThemeSelect">
+                    <option value="">-- All themes --</option>
+                </select>
+                <button onclick="loadDbStats()">Refresh</button>
+            </div>
+            <div class="input-group">
+                <input type="number" id="dbCount" min="1" value="5" style="max-width: 100px;">
+                <button onclick="generateFromDb()" style="flex: 1;">Generate from DB</button>
+            </div>
+            <p id="dbStatsPlaceholder" style="color: #999; font-size: 13px;">No unused phrases in the DB yet</p>
+        </div>
+
         <!-- Preview -->
         <div class="section">
             <div class="section-title">2. Preview Phrases</div>
@@ -300,6 +316,37 @@
             }
         }
 
+        async function loadDbStats() {
+            try {
+                const res = await fetch("/api/phrases/stats");
+                const stats = await res.json();
+                const select = document.getElementById("dbThemeSelect");
+                const currentValue = select.value;
+                select.innerHTML = '<option value="">-- All themes --</option>';
+                stats.forEach(row => {
+                    const opt = document.createElement("option");
+                    opt.value = row.theme;
+                    opt.textContent = `${row.theme} (${row.unused}/${row.total} unused)`;
+                    select.appendChild(opt);
+                });
+                if (currentValue) select.value = currentValue;
+                const hasUnused = stats.some(row => row.unused > 0);
+                document.getElementById("dbStatsPlaceholder").style.display = hasUnused ? "none" : "block";
+            } catch (e) {
+                showError("Failed to load phrase DB stats: " + e.message);
+            }
+        }
+
+        async function generateFromDb() {
+            const theme = document.getElementById("dbThemeSelect").value;
+            const count = parseInt(document.getElementById("dbCount").value, 10);
+            if (!count || count <= 0) {
+                showError("Please enter a valid count");
+                return;
+            }
+            await startGeneration({ source: "db", theme: theme || null, count });
+        }
+
         document.getElementById("csvSelect").addEventListener("change", async (e) => {
             currentCsvPath = e.target.value;
             if (currentCsvPath) {
@@ -335,6 +382,10 @@
                 showError("Please select a CSV file");
                 return;
             }
+            await startGeneration({ csv_path: currentCsvPath });
+        }
+
+        async function startGeneration(requestBody) {
             document.getElementById("generateBtn").disabled = true;
             document.getElementById("progressContainer").style.display = "block";
             document.getElementById("videoContainer").style.display = "none";
@@ -344,7 +395,7 @@
                 const res = await fetch("/api/generate", {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ csv_path: currentCsvPath }),
+                    body: JSON.stringify(requestBody),
                 });
                 if (!res.ok) throw new Error((await res.json()).detail);
                 currentJobId = (await res.json()).job_id;
@@ -421,6 +472,7 @@
         }
 
         loadCsvList();
+        loadDbStats();
     </script>
 </body>
 </html>
