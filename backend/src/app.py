@@ -94,11 +94,12 @@ def run_job(job_id: str):
     job = job_store.get_job(job_id, db_path=JOBS_DB_PATH)
     phrases = job_store.get_phrases(job)
     phrase_ids = job_store.get_phrase_ids(job)
+    sequence = job_store.get_sequence(job)
 
     try:
         set_job_status(job_id, total=len(phrases))
 
-        run_pipeline(phrases, on_progress=on_progress_callback(job_id))
+        run_pipeline(phrases, sequence=sequence, on_progress=on_progress_callback(job_id))
 
         if phrase_ids:
             mark_used(phrase_ids)
@@ -250,6 +251,7 @@ async def generate_video(request: dict):
       - {"csv_path": "..."}                          — CSVファイルを指定(従来通り)
       - {"source": "db", "theme": "...", "count": N}  — DBから未使用フレーズをN件取得
         (theme省略時は全テーマ横断で取得。動画化成功時にDB側で使用済みにマークする)
+      - どちらの形でも "sequence": ["en", "ja"] を併記可能(読み上げ順。省略時は英語のみ)
 
     既に実行中のジョブが無ければ即座に開始し、あれば queued として登録して
     実行中ジョブの完了後にディスパッチャーが自動的に起動する。
@@ -257,6 +259,10 @@ async def generate_video(request: dict):
     source = request.get("source", "csv")
     csv_path = None
     phrase_ids = None
+
+    sequence = request.get("sequence") or ["en"]
+    if not isinstance(sequence, list) or not sequence or any(lang not in ("en", "ja") for lang in sequence):
+        raise HTTPException(status_code=400, detail='sequence must be a non-empty list of "en"/"ja"')
 
     if source == "db":
         count = request.get("count")
@@ -282,7 +288,7 @@ async def generate_video(request: dict):
         is_running = bool(job_store.list_jobs(status="running", db_path=JOBS_DB_PATH))
         status = "queued" if is_running else "running"
         job_store.create_job(
-            job_id, phrases, csv_path=csv_path, phrase_ids=phrase_ids,
+            job_id, phrases, csv_path=csv_path, phrase_ids=phrase_ids, sequence=sequence,
             status=status, db_path=JOBS_DB_PATH,
         )
 
