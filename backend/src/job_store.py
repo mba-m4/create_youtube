@@ -1,0 +1,180 @@
+"""
+job_store.py
+-------------
+動画生成ジョブの状態をSQLiteで永続化するモジュール。
+サーバー(app.py)再起動をまたいでジョブの状態を保持し、複数ジョブの
+キューイング(実行中は1件のみ、それ以外は queued で待機)に対応するための永続化層。
+
+使い方(モジュールとしてimportする場合):
+    import job_store
+
+    job_store.init_db()                                   # DB初期化 + 起動時の復旧処理
+    job_store.create_job("ab12cd34", csv_path, status="running")
+    job_store.update_job("ab12cd34", current=1, total=3, current_phrase="Break a leg!")
+    job = job_store.get_job("ab12cd34")                    # {} if not found
+    running = job_store.list_jobs(status="running")
+    next_job = job_store.claim_next_queued_job()           # 最古のqueuedジョブをrunningにして返す(なければNone)
+
+コマンドラインから直接実行する場合:
+    python3 job_store.py init     # DB初期化(+ 中断ジョブのerror化)
+    python3 job_store.py list     # 現在のジョブ一覧を表示
+
+起動時の復旧について:
+    init_db() を呼ぶと、前回プロセスで status="running" のまま残っているジョブを
+    status="error"(error="Interrupted by server restart")に遷移させる。
+    ffmpeg/TTSの実行状態はプロセス終了とともに失われ再開できないため。
+    app.py はインポート時(モジュールロード時)に init_db() を1回呼び出す想定。
+"""
+
+import datetime
+import os
+import sqlite3
+import sys
+
+DB_PATH = "data/jobs.db"
+
+SCHEMA = """
+CREATE TABLE IF NOT EXISTS jobs (
+    id TEXT PRIMARY KEY,
+    status TEXT NOT NULL,
+    current INTEGER NOT NULL DEFAULT 0,
+    total INTEGER NOT NULL DEFAULT 0,
+    current_phrase TEXT,
+    error TEXT,
+    csv_path TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+"""
+
+INTERRUPTED_ERROR_MSG = "Interrupted by server restart"
+
+
+def get_connection(db_path=DB_PATH):
+    """DB接続を返す(保存先ディレクトリがなければ作成)。行はdict風にアクセスできる。"""
+    out_dir = os.path.dirname(db_path)
+    if out_dir:
+        os.makedirs(out_dir, exist_ok=True)
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def init_db(db_path=DB_PATH):
+    """テーブルが無ければ作成し、前回プロセスから残った running ジョブを error にする"""
+    conn = get_connection(db_path)
+    conn.execute(SCHEMA)
+    conn.commit()
+    conn.close()
+    _recover_interrupted_jobs(db_path)
+
+
+def _recover_interrupted_jobs(db_path=DB_PATH):
+    """status="running" のまま残っているジョブを error に遷移させる(サーバー再起動時の後始末)"""
+    conn = get_connection(db_path)
+    now = datetime.datetime.now().isoformat()
+    conn.execute(
+        "UPDATE jobs SET status = ?, error = ?, updated_at = ? WHERE status = ?",
+        ("error", INTERRUPTED_ERROR_MSG, now, "running"),
+    )
+    conn.commit()
+    conn.close()
+
+
+def create_job(job_id, csv_path=None, status="queued", db_path=DB_PATH):
+    """新しいジョブ行を作成する"""
+    conn = get_connection(db_path)
+    now = datetime.datetime.now().isoformat()
+    conn.execute(
+        "INSERT INTO jobs (id, status, current, total, current_phrase, error, csv_path, created_at, updated_at) "
+        "VALUES (?, ?, 0, 0, '', NULL, ?, ?, ?)",
+        (job_id, status, csv_path, now, now),
+    )
+    conn.commit()
+    conn.close()
+
+
+def update_job(job_id, db_path=DB_PATH, **fields):
+    """ジョブの状態を更新する(既存のset_job_statusと同等)。updated_atは自動更新。"""
+    if not fields:
+        return
+    fields["updated_at"] = datetime.datetime.now().isoformat()
+    columns = ", ".join(f"{key} = ?" for key in fields)
+    values = list(fields.values()) + [job_id]
+    conn = get_connection(db_path)
+    conn.execute(f"UPDATE jobs SET {columns} WHERE id = ?", values)
+    conn.commit()
+    conn.close()
+
+
+def get_job(job_id, db_path=DB_PATH):
+    """ジョブの状態をdictで取得する。存在しなければ{}を返す(既存のget_job_statusと同じ挙動)。"""
+    conn = get_connection(db_path)
+    row = conn.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
+    conn.close()
+    return dict(row) if row else {}
+
+
+def list_jobs(status=None, db_path=DB_PATH):
+    """ジョブ一覧を作成日時順で取得する。status指定で絞り込み可能。"""
+    conn = get_connection(db_path)
+    if status:
+        rows = conn.execute(
+            "SELECT * FROM jobs WHERE status = ? ORDER BY created_at", (status,)
+        ).fetchall()
+    else:
+        rows = conn.execute("SELECT * FROM jobs ORDER BY created_at").fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
+
+
+def claim_next_queued_job(db_path=DB_PATH):
+    """
+    最も古い status="queued" のジョブを running に遷移させて返す(なければNoneを返す)。
+    ディスパッチャーが次に実行するジョブを取り出すために使う。
+    """
+    conn = get_connection(db_path)
+    row = conn.execute(
+        "SELECT * FROM jobs WHERE status = 'queued' ORDER BY created_at LIMIT 1"
+    ).fetchone()
+    if not row:
+        conn.close()
+        return None
+    now = datetime.datetime.now().isoformat()
+    conn.execute(
+        "UPDATE jobs SET status = 'running', updated_at = ? WHERE id = ?",
+        (now, row["id"]),
+    )
+    conn.commit()
+    conn.close()
+    job = dict(row)
+    job["status"] = "running"
+    return job
+
+
+def main():
+    if len(sys.argv) < 2:
+        print("使い方:")
+        print("  python3 job_store.py init")
+        print("  python3 job_store.py list")
+        sys.exit(1)
+
+    command = sys.argv[1]
+
+    if command == "init":
+        init_db()
+        print(f"DB initialized: {DB_PATH}")
+    elif command == "list":
+        init_db()
+        rows = list_jobs()
+        if not rows:
+            print("(ジョブがありません)")
+        for row in rows:
+            print(f"{row['id']}: {row['status']} ({row['current']}/{row['total']}) csv={row['csv_path']}")
+    else:
+        print(f"unknown command: {command}")
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()
