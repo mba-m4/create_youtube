@@ -113,7 +113,12 @@ JP_FONT_PATH=/Library/Fonts/NotoSansCJK-Regular.ttc
 
 4. **TTSを高品質化**(実装済み)
    - `tts_elevenlabs.py` でElevenLabs APIに差し替え済み(`video_pipeline.py`から呼び出し)
-   - 英語だけでなく日本語音声も追加する場合、読み上げ順(英語→間→日本語)と、その合計時間に合わせた画像表示時間の計算が必要(未実装)
+   - 日本語音声も含めた読み上げ順(`sequence`)のカスタマイズに対応済み(実装済み)。
+     `run_pipeline(phrases, sequence=["en", "ja"])`のように読み上げる言語の順番を指定できる。
+     省略時は`["en"]`(従来通り英語のみ)。同じ言語が複数回出てきても音声APIは言語ごとに
+     1回しか呼ばない(重複排除して結合)。Web UIからは「4. Generate Video」の
+     reading order欄にカンマ区切り(例: `en,ja`)で指定する。CLIからは
+     `python3 video_pipeline.py phrases.csv en,ja`のように指定する
 
 5. **cronで定期実行**
    - 1〜4が固まってから着手
