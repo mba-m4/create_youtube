@@ -17,6 +17,7 @@ job_store.py
     next_job = job_store.claim_next_queued_job()           # 最古のqueuedジョブをrunningにして返す(なければNone)
     job_store.get_phrases(job)                             # -> [(en, jp), ...] (phrases_jsonをデコード)
     job_store.get_phrase_ids(job)                          # -> [id, ...] または None (phrase_ids_jsonをデコード)
+    job_store.get_sequence(job)                            # -> ["en", "ja"] など (sequence_jsonをデコード、未指定なら["en"])
 
 コマンドラインから直接実行する場合:
     python3 job_store.py init     # DB初期化(+ 中断ジョブのerror化)
@@ -35,6 +36,11 @@ job_store.py
     DBの未使用フレーズから作成したジョブは phrase_ids_json にフレーズIDも保存し、
     動画化成功後に呼び出し側が phrase_db.mark_used() でDBを更新できるようにする
     (CSV由来のジョブは phrase_ids_json = NULL)。
+
+読み上げ順(sequence)について:
+    create_job() 時点で読み上げ順(例: ["en", "ja"])を sequence_json に保存する。
+    未指定時は ["en"](英語のみ、従来通り)。video_pipeline.run_pipeline() の
+    sequence 引数にそのまま渡す。
 """
 
 import datetime
@@ -56,6 +62,7 @@ CREATE TABLE IF NOT EXISTS jobs (
     csv_path TEXT,
     phrases_json TEXT NOT NULL DEFAULT '[]',
     phrase_ids_json TEXT,
+    sequence_json TEXT NOT NULL DEFAULT '["en"]',
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
@@ -95,24 +102,26 @@ def _recover_interrupted_jobs(db_path=DB_PATH):
     conn.close()
 
 
-def create_job(job_id, phrases, csv_path=None, phrase_ids=None, status="queued", db_path=DB_PATH):
+def create_job(job_id, phrases, csv_path=None, phrase_ids=None, sequence=None, status="queued", db_path=DB_PATH):
     """
     新しいジョブ行を作成する。
 
     phrases: [(english, japanese), ...] — 処理対象フレーズのスナップショット
     csv_path: CSV由来の場合の元ファイルパス(表示用、DB由来ならNone)
     phrase_ids: DB由来の場合のフレーズID一覧(動画化成功後のmark_used用、CSV由来ならNone)
+    sequence: 読み上げる言語の順番(例: ["en", "ja"])。省略時は ["en"](英語のみ)。
     """
     conn = get_connection(db_path)
     now = datetime.datetime.now().isoformat()
     conn.execute(
         "INSERT INTO jobs (id, status, current, total, current_phrase, error, csv_path, "
-        "phrases_json, phrase_ids_json, created_at, updated_at) "
-        "VALUES (?, ?, 0, 0, '', NULL, ?, ?, ?, ?, ?)",
+        "phrases_json, phrase_ids_json, sequence_json, created_at, updated_at) "
+        "VALUES (?, ?, 0, 0, '', NULL, ?, ?, ?, ?, ?, ?)",
         (
             job_id, status, csv_path,
             json.dumps(phrases),
             json.dumps(phrase_ids) if phrase_ids else None,
+            json.dumps(sequence or ["en"]),
             now, now,
         ),
     )
@@ -129,6 +138,12 @@ def get_phrase_ids(job):
     """ジョブ行(dict)からDB由来のフレーズID一覧を取り出す(CSV由来ならNone)"""
     raw = job.get("phrase_ids_json")
     return json.loads(raw) if raw else None
+
+
+def get_sequence(job):
+    """ジョブ行(dict)から読み上げ順を取り出す(例: ["en", "ja"]、未指定なら["en"])"""
+    raw = job.get("sequence_json")
+    return json.loads(raw) if raw else ["en"]
 
 
 def update_job(job_id, db_path=DB_PATH, **fields):
