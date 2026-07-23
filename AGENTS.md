@@ -29,17 +29,59 @@ create_youtube/
 
 ## 開発の流れ
 
-1. **feature ブランチを切る** — `git checkout -b feature/xxx`
-2. **実装 + テスト** — backend に変更を加える
-3. **コミット** — `git commit -m "..."`。以下の方針に従う:
-   - 1コミット = 1機能 or 1バグ修正 (アトミック)
-   - メッセージは英語で簡潔に: "Add Web UI for video generation"
-   - backend/ 内の変更であれば "backend: ..." で始めてもよい
-4. **プッシュ** — `git push origin feature/xxx`
-5. **PR作成** — GitHub Web UI から PR を作成
-   - タイトル: コミットメッセージと同じで OK
-   - 説明: 何をなぜ変更したのか、テスト方法など
+1. **Issue を作成** — 作業内容に応じて GitHub Issue を立てる。後述の「粒度」ガイドを参照
+2. **feature ブランチを切る** — `git checkout -b feature/xxx` または `git checkout -b fix/xxx`
+3. **実装 + テスト** — 小さく分けたタスク単位で実装する
+4. **コミット** — `git commit -m "..."`。以下の方針に従う:
+   - 1コミット = 1つの独立した変更 (アトミック・単一責任)
+   - メッセージは英語で簡潔に。詳細は本文に記載
+   - 差分行数は 100-300 行程度が目安
+5. **複数コミットで PR を作成** — 関連する複数のコミットをまとめて PR にする
 6. **レビュー + マージ** — PR がマージされたら feature ブランチは削除
+
+## コミット・PR・Issue の粒度ガイドライン
+
+このプロジェクトでは、変更を細かく分割することを重視します。
+
+### Issue（チケット）の粒度
+
+**1つの Issue = 1週間以内に完結する単一の作業**
+
+例：
+- ❌ 大きすぎる: "Web UI を作る" (複数の機能が含まれる)
+- ✅ 適切: "Web UI の CSV アップロード機能を実装する"
+- ✅ 適切: "Web UI の進捗表示を実装する"
+- ✅ 適切: "FastAPI エンドポイント `/api/generate` を実装する"
+
+### コミットの粒度
+
+**1つのコミット = 1つの独立した変更。差分 100-300 行程度が目安**
+
+例：
+- ❌ 大きすぎる: app.py + index.html + README を同時にコミット (差分 1000+ 行)
+- ✅ 適切: "backend: Add FastAPI app.py with core endpoints"
+- ✅ 適切: "frontend: Create index.html Web UI page"
+- ✅ 適切: "docs: Update README with Web UI setup"
+- ✅ 適切: "backend: Add on_progress callback to video_pipeline"
+
+### PR の粒度
+
+**1つの PR = 1つの Issue。複数の関連コミットで構成**
+
+例：
+- ❌ 大きすぎる: 14 ファイル、1000+ 行の変更を 1 PR で
+- ✅ 適切: Issue「Web UI の CSV アップロード機能」に対して、複数のコミット:
+  1. "backend: Add /api/upload endpoint"
+  2. "frontend: Add CSV upload form"
+  3. "docs: Update README"
+
+### 実装時のチェックリスト
+
+- [ ] Issue を先に作成した
+- [ ] 1 コミット = 1 つの独立した変更か確認
+- [ ] 1 コミット差分が 100-300 行程度か確認（大きければ分割）
+- [ ] PR 説明に Issue 番号を記載（`Closes #123` など）
+- [ ] 関連するドキュメント更新も別コミットで含める
 
 ## Backend の開発
 

@@ -104,12 +104,18 @@ async def upload_csv(file: UploadFile = File(...)):
     upload_dir = os.path.join(DATA_DIR, "uploads")
     os.makedirs(upload_dir, exist_ok=True)
 
-    filepath = os.path.join(upload_dir, file.filename or "uploaded.csv")
+    filename = os.path.basename(file.filename or "")
+    if not filename or filename in (".", ".."):
+        filename = "uploaded.csv"
+    if not filename.lower().endswith(".csv"):
+        raise HTTPException(status_code=400, detail="Only .csv files are allowed")
+
+    filepath = os.path.join(upload_dir, filename)
     with open(filepath, "wb") as f:
         content = await file.read()
         f.write(content)
 
-    return {"filename": file.filename, "path": filepath}
+    return {"filename": filename, "path": filepath}
 
 
 @app.get("/api/preview")
@@ -195,7 +201,7 @@ def main():
     """開発用: uvicorn で起動"""
     print("Starting video generator Web UI...")
     print("Open http://localhost:8000 in your browser")
-    uvicorn.run(app, host="127.0.0.1", port=8000, reload=True)
+    uvicorn.run(app, host="127.0.0.1", port=8000)
 
 
 if __name__ == "__main__":
