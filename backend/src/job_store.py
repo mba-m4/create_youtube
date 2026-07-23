@@ -9,11 +9,14 @@ job_store.py
     import job_store
 
     job_store.init_db()                                   # DB初期化 + 起動時の復旧処理
-    job_store.create_job("ab12cd34", csv_path, status="running")
+    phrases = [("Break a leg!", "頑張ってね!")]
+    job_store.create_job("ab12cd34", phrases, csv_path=csv_path, status="running")
     job_store.update_job("ab12cd34", current=1, total=3, current_phrase="Break a leg!")
     job = job_store.get_job("ab12cd34")                    # {} if not found
     running = job_store.list_jobs(status="running")
     next_job = job_store.claim_next_queued_job()           # 最古のqueuedジョブをrunningにして返す(なければNone)
+    job_store.get_phrases(job)                             # -> [(en, jp), ...] (phrases_jsonをデコード)
+    job_store.get_phrase_ids(job)                          # -> [id, ...] または None (phrase_ids_jsonをデコード)
 
 コマンドラインから直接実行する場合:
     python3 job_store.py init     # DB初期化(+ 中断ジョブのerror化)
@@ -24,9 +27,18 @@ job_store.py
     status="error"(error="Interrupted by server restart")に遷移させる。
     ffmpeg/TTSの実行状態はプロセス終了とともに失われ再開できないため。
     app.py はインポート時(モジュールロード時)に init_db() を1回呼び出す想定。
+
+フレーズの保存について:
+    create_job() 時点で処理対象のフレーズ一覧を phrases_json にスナップショットとして
+    保存する(CSV由来・DB由来のどちらでも同じ形)。queued の間にCSVファイルが変更/削除
+    されても、ディスパッチャーが実行時に取り出す内容は作成時点のまま安定する。
+    DBの未使用フレーズから作成したジョブは phrase_ids_json にフレーズIDも保存し、
+    動画化成功後に呼び出し側が phrase_db.mark_used() でDBを更新できるようにする
+    (CSV由来のジョブは phrase_ids_json = NULL)。
 """
 
 import datetime
+import json
 import os
 import sqlite3
 import sys
@@ -42,6 +54,8 @@ CREATE TABLE IF NOT EXISTS jobs (
     current_phrase TEXT,
     error TEXT,
     csv_path TEXT,
+    phrases_json TEXT NOT NULL DEFAULT '[]',
+    phrase_ids_json TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
@@ -81,17 +95,40 @@ def _recover_interrupted_jobs(db_path=DB_PATH):
     conn.close()
 
 
-def create_job(job_id, csv_path=None, status="queued", db_path=DB_PATH):
-    """新しいジョブ行を作成する"""
+def create_job(job_id, phrases, csv_path=None, phrase_ids=None, status="queued", db_path=DB_PATH):
+    """
+    新しいジョブ行を作成する。
+
+    phrases: [(english, japanese), ...] — 処理対象フレーズのスナップショット
+    csv_path: CSV由来の場合の元ファイルパス(表示用、DB由来ならNone)
+    phrase_ids: DB由来の場合のフレーズID一覧(動画化成功後のmark_used用、CSV由来ならNone)
+    """
     conn = get_connection(db_path)
     now = datetime.datetime.now().isoformat()
     conn.execute(
-        "INSERT INTO jobs (id, status, current, total, current_phrase, error, csv_path, created_at, updated_at) "
-        "VALUES (?, ?, 0, 0, '', NULL, ?, ?, ?)",
-        (job_id, status, csv_path, now, now),
+        "INSERT INTO jobs (id, status, current, total, current_phrase, error, csv_path, "
+        "phrases_json, phrase_ids_json, created_at, updated_at) "
+        "VALUES (?, ?, 0, 0, '', NULL, ?, ?, ?, ?, ?)",
+        (
+            job_id, status, csv_path,
+            json.dumps(phrases),
+            json.dumps(phrase_ids) if phrase_ids else None,
+            now, now,
+        ),
     )
     conn.commit()
     conn.close()
+
+
+def get_phrases(job):
+    """ジョブ行(dict)から処理対象フレーズを [(english, japanese), ...] で取り出す"""
+    return [tuple(p) for p in json.loads(job["phrases_json"])]
+
+
+def get_phrase_ids(job):
+    """ジョブ行(dict)からDB由来のフレーズID一覧を取り出す(CSV由来ならNone)"""
+    raw = job.get("phrase_ids_json")
+    return json.loads(raw) if raw else None
 
 
 def update_job(job_id, db_path=DB_PATH, **fields):
