@@ -33,10 +33,28 @@
 - `src/phrase_db.py` が担当。DB本体は `data/phrases.db`(`.gitignore`済み、環境ごとにローカルで持つ)。
 - スキーマ: `phrases(id, english, japanese, theme, created_at, used_at, times_used)`。
 - 重複判定は `english` の完全一致(`UNIQUE`制約 + `INSERT OR IGNORE`)。
-- `phrase_generator.py` の出力(CSV)は `phrase_db.import_csv()` で取り込む。今のところ
-  `phrase_generator.py`がDBに直接INSERTする経路は作っていない(CSV出力は単独でも使えるようにするため)。
+- 読み取り系(`get_unused_phrases`/`get_review_phrases`/`mark_used`/`stats_by_theme`)も
+  書き込み系(`insert_phrases`/`import_csv`)と同様に呼び出し時に `init_db()` するので、
+  DBファイル未作成の状態から呼んでも安全。
+- `phrase_generator.py` の出力(CSV保存)に加えて、Web UI (`app.py` の
+  `POST /api/phrases/generate`)から呼んだ場合は生成結果を `phrase_db.insert_phrases()` で
+  DBにも登録する(CSV出力は単独運用でも使えるよう引き続き併存)。
 - 動画化との連携(`get_unused_phrases()` → `video_pipeline.run_pipeline()` → `mark_used()`)は
-  まだ`video_pipeline.py`側に組み込んでいない。呼び出し側で手動で繋ぐ想定。
+  `app.py` の `POST /api/generate`(`{"source": "db", "theme": ..., "count": ...}`)と
+  `job_store.py` に組み込み済み。`video_pipeline.py` 自体はフレーズ由来を意識しない設計のまま。
+
+## ジョブ管理(Web UI)
+
+- `src/job_store.py` が担当。ジョブ状態は `data/jobs.db`(`.gitignore`済み)に永続化し、
+  サーバー再起動をまたいで保持する。起動時に `status="running"` のまま残ったジョブは
+  `error`(`"Interrupted by server restart"`)に遷移させる。
+- 同時に実行できる動画生成ジョブは常に1件のみ(`video_pipeline.py` の出力先が
+  `AUDIO_DIR`/`IMAGE_DIR`/`CLIP_DIR`/`FINAL_VIDEO` の固定パスで、ジョブごとに分離されて
+  いないため)。2件目以降は `queued` として登録し、`app.py` のディスパッチャーが
+  実行中ジョブの完了を検知して自動的に起動する。
+- ジョブ作成時点の処理対象フレーズは `phrases_json` にスナップショットとして保存する
+  (CSV由来・DB由来を同じ形で扱うため)。DB由来ジョブは `phrase_ids_json` も保存し、
+  動画化成功後に `mark_used()` を呼ぶ。
 
 ## TTS(音声生成)
 
@@ -46,4 +64,3 @@
 ## 未確定事項(今後決める)
 
 - ElevenLabsの音声品質基準(voice_id/model_idの最終選定)
-- `video_pipeline.py`をDB連携(未使用フレーズの自動取得→動画化→used_at更新)に対応させるか

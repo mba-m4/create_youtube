@@ -91,7 +91,7 @@ JP_FONT_PATH=/Library/Fonts/NotoSansCJK-Regular.ttc
    - `phrase_generator.py` で実装済み。Claude APIに「テーマ→フレーズN個(英語+日本語)」を投げて生成し、CSVに保存する
    - API課金が有効になったら `python3 src/phrase_generator.py "テーマ" [件数]` で実地確認する
 
-2. **フレーズ管理をDB化**(実装済み・`video_pipeline.py`との自動連携は未実装)
+2. **フレーズ管理をDB化**(実装済み・Web UIとの自動連携も実装済み)
    - `phrase_db.py` で実装済み。SQLite(`data/phrases.db`、`.gitignore`済み)。
    - スキーマ: `phrases(id, english, japanese, theme, created_at, used_at, times_used)`
    - 実装済みの運用:
@@ -100,18 +100,23 @@ JP_FONT_PATH=/Library/Fonts/NotoSansCJK-Regular.ttc
      - `mark_used(ids)` — 使用済みにマーク(`used_at`更新、`times_used`+1)
      - `stats_by_theme()` / `python3 src/phrase_db.py stats` — テーマ別在庫数の確認
      - `import_csv(path, theme)` / `python3 src/phrase_db.py import <csv> [theme]` — 既存CSVの取り込み
-   - 未実装: `phrase_generator.py`からDBへの直接INSERT、`video_pipeline.py`側での
-     「DBから取得→動画化→used_at更新」の自動連携(現状は呼び出し側で手動で繋ぐ)
+   - Web UI (`app.py`) との連携:
+     - `POST /api/phrases/generate` — `phrase_generator.py`で生成したフレーズをCSV保存に加えてDBにも直接INSERT
+     - `POST /api/generate` (`source: "db"`) — DBから未使用フレーズを取得→動画化→成功時に`mark_used()`まで自動化
 
-3. **TTSを高品質化**(実装済み)
+3. **Web UIのジョブ管理を永続化・複数ジョブ対応**(実装済み)
+   - `job_store.py` で実装済み。ジョブ状態をSQLite(`data/jobs.db`、`.gitignore`済み)に永続化し、サーバー再起動をまたいで保持する
+   - 動画生成の同時実行は常に1件までとし、それ以外のリクエストは`queued`として自動的にキューイングされる(完了後に自動で次のジョブが起動する)
+
+4. **TTSを高品質化**(実装済み)
    - `tts_elevenlabs.py` でElevenLabs APIに差し替え済み(`video_pipeline.py`から呼び出し)
    - 英語だけでなく日本語音声も追加する場合、読み上げ順(英語→間→日本語)と、その合計時間に合わせた画像表示時間の計算が必要(未実装)
 
-4. **cronで定期実行**
-   - 1〜3が固まってから着手
+5. **cronで定期実行**
+   - 1〜4が固まってから着手
    - 例: 毎日決まった時間にテーマを1つ選んで動画を自動生成
 
-5. **Slack連携 / YouTube自動アップロード**
+6. **Slack連携 / YouTube自動アップロード**
    - 運用が固まってからの最終フェーズ
    - Slack Bot(`slack_bolt`)でスマホから起動 → 完成後の動画をSlackに返す、などを想定
    - YouTube Data APIでアップロードまで自動化可能
@@ -140,8 +145,14 @@ python3 src/app.py         # または: uv run python3 src/app.py
 
 ### 操作
 
-1. **CSV を選択またはアップロード** — `data/` 配下のCSVファイルをドロップダウンから選択、
-   または新しいCSVをアップロード
-2. **フレーズをプレビュー** — 選択したCSVの内容を確認
-3. **「Generate Video」をクリック** — 動画生成を開始(進捗をリアルタイム表示)
-4. **完成後、ダウンロード** — 動画をプレイヤーで再生またはMP4をダウンロード
+1. **(任意)新しいフレーズを生成** — テーマと件数を指定して「Generate」をクリックすると、
+   Claude APIでフレーズを自動生成し、CSV保存 + フレーズDB登録まで行う
+2. **CSV を選択またはアップロード** — `data/` 配下のCSVファイルをドロップダウンから選択、
+   または新しいCSVをアップロード。あるいは「Or Generate From Phrase Bank」でDB内の
+   未使用フレーズをテーマ・件数指定して直接動画化することもできる
+3. **フレーズをプレビュー** — 選択したCSVの内容を確認
+4. **「Generate Video」をクリック** — 動画生成を開始(進捗をリアルタイム表示)。既に別の
+   ジョブが実行中の場合は自動的にキューイングされ、完了後に順番に処理される
+5. **完成後、ダウンロード** — 動画をプレイヤーで再生またはMP4をダウンロード
+
+動画生成ジョブの状態はサーバー再起動をまたいで保持される(`data/jobs.db`)。
