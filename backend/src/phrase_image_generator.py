@@ -46,6 +46,9 @@ JP_FONT_PATH = os.environ.get(
 )
 EN_FONT_SIZE = 64
 JP_FONT_SIZE = 48
+MIN_FONT_SIZE = 24  # 自動縮小の下限
+TEXT_MARGIN = 100  # 左右の余白(区切り線と揃える)
+LINE_SPACING = 8
 
 
 def load_fonts(en_size=EN_FONT_SIZE, jp_size=JP_FONT_SIZE):
@@ -70,13 +73,69 @@ def make_gradient_background(
     return base
 
 
-def draw_centered_text(draw, text, font, y, color, width=WIDTH):
-    """指定したy座標に、横方向中央揃えでテキストを描画する"""
-    bbox = draw.textbbox((0, 0), text, font=font)
-    text_w = bbox[2] - bbox[0]
-    x = (width - text_w) / 2
-    draw.text((x, y), text, font=font, fill=color)
-    return bbox
+def wrap_text(draw, text, font, max_width):
+    """
+    テキストをmax_width(px)に収まるよう複数行に折り返す。
+    スペース区切りの単語単位で折り返し、1単語がmax_widthを超える場合(長い英単語や、
+    スペースを含まない日本語文など)は文字単位でさらに分割する。
+    """
+    lines = []
+    for word in text.split(" "):
+        if not word:
+            continue
+        if draw.textlength(word, font=font) <= max_width:
+            candidates = [word]
+        else:
+            # 1単語だけでmax_widthを超える場合は文字単位で分割する
+            candidates = []
+            chunk = ""
+            for ch in word:
+                if chunk and draw.textlength(chunk + ch, font=font) > max_width:
+                    candidates.append(chunk)
+                    chunk = ch
+                else:
+                    chunk += ch
+            if chunk:
+                candidates.append(chunk)
+
+        for candidate in candidates:
+            if lines and draw.textlength(f"{lines[-1]} {candidate}", font=font) <= max_width:
+                lines[-1] = f"{lines[-1]} {candidate}"
+            else:
+                lines.append(candidate)
+
+    return lines or [""]
+
+
+def block_height(draw, lines, font, line_spacing=LINE_SPACING):
+    """複数行テキストを描画したときの合計高さを計算する"""
+    heights = [draw.textbbox((0, 0), line, font=font)[3] for line in lines]
+    return sum(heights) + line_spacing * (len(lines) - 1)
+
+
+def fit_wrapped_text(draw, text, font_path, initial_size, max_width, max_height):
+    """
+    max_width/max_heightに収まるよう、必要ならフォントサイズを段階的に縮小しながら
+    折り返し行を確定させる。MIN_FONT_SIZEまで縮小しても収まらない場合はそのまま返す。
+    """
+    size = initial_size
+    while True:
+        font = ImageFont.truetype(font_path, size)
+        lines = wrap_text(draw, text, font, max_width)
+        if block_height(draw, lines, font) <= max_height or size <= MIN_FONT_SIZE:
+            return font, lines
+        size = max(MIN_FONT_SIZE, size - 4)
+
+
+def draw_wrapped_text(draw, lines, font, top_y, color, width=WIDTH, line_spacing=LINE_SPACING):
+    """複数行のテキストを、上端top_yから下方向へ順に中央揃えで描画する"""
+    y = top_y
+    for line in lines:
+        bbox = draw.textbbox((0, 0), line, font=font)
+        text_w = bbox[2] - bbox[0]
+        x = (width - text_w) / 2
+        draw.text((x, y), line, font=font, fill=color)
+        y += bbox[3] + line_spacing
 
 
 def generate_phrase_image(
@@ -88,21 +147,35 @@ def generate_phrase_image(
     height=HEIGHT,
 ):
     """1フレーズ分の画像(PIL.Image)を生成して返す"""
-    if en_font is None or jp_font is None:
-        en_font, jp_font = load_fonts()
-
     img = make_gradient_background(width, height)
     draw = ImageDraw.Draw(img)
 
     # 区切り線
+    divider_y = height // 2
     draw.line(
-        [(100, height // 2), (width - 100, height // 2)],
+        [(TEXT_MARGIN, divider_y), (width - TEXT_MARGIN, divider_y)],
         fill=(255, 255, 255, 80),
         width=2,
     )
 
-    draw_centered_text(draw, en_text, en_font, height // 2 - 120, EN_COLOR, width)
-    draw_centered_text(draw, jp_text, jp_font, height // 2 + 40, JP_COLOR, width)
+    max_text_width = width - TEXT_MARGIN * 2
+    en_gap, jp_gap = 40, 40
+    max_en_height = divider_y - en_gap
+    max_jp_height = height - divider_y - jp_gap
+
+    en_size = en_font.size if en_font else EN_FONT_SIZE
+    jp_size = jp_font.size if jp_font else JP_FONT_SIZE
+
+    fitted_en_font, en_lines = fit_wrapped_text(
+        draw, en_text, EN_FONT_PATH, en_size, max_text_width, max_en_height
+    )
+    fitted_jp_font, jp_lines = fit_wrapped_text(
+        draw, jp_text, JP_FONT_PATH, jp_size, max_text_width, max_jp_height
+    )
+
+    en_top_y = divider_y - en_gap - block_height(draw, en_lines, fitted_en_font)
+    draw_wrapped_text(draw, en_lines, fitted_en_font, en_top_y, EN_COLOR, width)
+    draw_wrapped_text(draw, jp_lines, fitted_jp_font, divider_y + jp_gap, JP_COLOR, width)
 
     return img
 
